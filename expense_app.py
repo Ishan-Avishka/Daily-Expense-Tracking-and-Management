@@ -474,6 +474,7 @@ def make_field(parent, label_text, row, widget):
 
 def open_summary_chart(df):
     chart_window = tk.Toplevel(window)
+
     chart_window.title("BI Dashboard - Expense Analysis")
     chart_window.geometry("1100x720")
     chart_window.configure(bg=APP_BG)
@@ -652,7 +653,8 @@ ttk.Button(button_row, text="Add Expense", command=add_expense, style="Primary.T
 ttk.Button(button_row, text="Show BI Chart", command=show_chart, style="Secondary.TButton").grid(row=0, column=1, padx=(0, 10))
 ttk.Button(button_row, text="Show All Expenses", command=show_all_expenses, style="Secondary.TButton").grid(row=0, column=2, padx=(0, 10))
 ttk.Button(button_row, text="Add User", command=add_user, style="Secondary.TButton").grid(row=0, column=3, padx=(0, 10))
-ttk.Button(button_row, text="Refresh Lists", command=set_combobox_values, style="Secondary.TButton").grid(row=0, column=4)
+ttk.Button(button_row, text="Manage Users", command=manage_users, style="Secondary.TButton").grid(row=0, column=4, padx=(0, 10))
+ttk.Button(button_row, text="Refresh Lists", command=set_combobox_values, style="Secondary.TButton").grid(row=0, column=5)
 
 footer_card = ttk.Frame(content_frame, style="TFrame", padding=(4, 18, 4, 0))
 footer_card.grid(row=4, column=0, sticky="ew")
