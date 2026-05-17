@@ -219,7 +219,7 @@ def show_all_expenses():
         
         if user_id:
             query = """
-                SELECT u.Name AS User, c.CategoryName AS Category, e.Amount, e.ExpenseDate AS Date, e.Description, p.MethodName AS PaymentMethod
+                SELECT u.Name AS [User], c.CategoryName AS Category, e.Amount, e.ExpenseDate AS [Date], e.Description, p.MethodName AS PaymentMethod
                 FROM Expenses e
                 JOIN Users u ON e.UserID = u.UserID
                 JOIN Categories c ON e.CategoryID = c.CategoryID
@@ -233,7 +233,7 @@ def show_all_expenses():
                 rows = cursor.fetchall()
         else:
             query = """
-                SELECT u.Name AS User, c.CategoryName AS Category, e.Amount, e.ExpenseDate AS Date, e.Description, p.MethodName AS PaymentMethod
+                SELECT u.Name AS [User], c.CategoryName AS Category, e.Amount, e.ExpenseDate AS [Date], e.Description, p.MethodName AS PaymentMethod
                 FROM Expenses e
                 JOIN Users u ON e.UserID = u.UserID
                 JOIN Categories c ON e.CategoryID = c.CategoryID
