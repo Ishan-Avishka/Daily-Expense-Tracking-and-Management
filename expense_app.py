@@ -1,5 +1,6 @@
 import os
 from datetime import datetime
+import textwrap
 import tkinter as tk
 from tkinter import messagebox, ttk
 
@@ -28,6 +29,7 @@ FONT_SUBTITLE = ("Helvetica Neue", 10)
 FONT_SECTION = ("Helvetica Neue", 12, "bold")
 FONT_BODY = ("Helvetica Neue", 10)
 FONT_SMALL = ("Helvetica Neue", 9)
+FONT_METRIC = ("Helvetica Neue", 18, "bold")
 
 
 def get_connection():
@@ -60,6 +62,41 @@ def load_combobox_values():
     payment_map = {f"{row.PaymentMethodID} - {row.MethodName}": int(row.PaymentMethodID) for row in payment_methods}
 
     return user_map, category_map, payment_map
+
+
+def format_money(value):
+    return f"LKR {float(value):,.2f}"
+
+
+def load_dashboard_metrics(user_id=None):
+    if user_id:
+        query = f"""
+            SELECT
+                COUNT(*) AS ExpenseCount,
+                COALESCE(SUM(Amount), 0) AS TotalSpent,
+                COALESCE(AVG(Amount), 0) AS AvgSpent
+            FROM Expenses
+            WHERE UserID = {user_id}
+        """
+    else:
+        query = """
+            SELECT
+                COUNT(*) AS ExpenseCount,
+                COALESCE(SUM(Amount), 0) AS TotalSpent,
+                COALESCE(AVG(Amount), 0) AS AvgSpent
+            FROM Expenses
+        """
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(query)
+        row = cursor.fetchone()
+
+    return {
+        "count": int(row.ExpenseCount or 0),
+        "total": float(row.TotalSpent or 0),
+        "average": float(row.AvgSpent or 0),
+    }
 
 
 def set_combobox_values():
@@ -137,6 +174,7 @@ def add_expense():
         date_entry.delete(0, tk.END)
         date_entry.insert(0, datetime.now().strftime("%Y-%m-%d"))
         description_entry.delete(0, tk.END)
+        refresh_dashboard_metrics()
 
     except pyodbc.Error as exc:
         messagebox.showerror("Database Error", f"Could not add the expense:\n{exc}")
@@ -155,50 +193,143 @@ def show_chart():
         """
 
         with get_connection() as conn:
-            df = pd.read_sql(query, conn)
+                cursor = conn.cursor()
+                cursor.execute(query)
+                rows = cursor.fetchall()
+                if not rows:
+                    df = pd.DataFrame(columns=["CategoryName", "TotalExpense"])
+                else:
+                    df = pd.DataFrame.from_records(rows, columns=[column[0] for column in cursor.description])
 
         if df.empty:
             messagebox.showwarning("No Data", "No expenses found to chart yet.")
             return
-
-        chart_window = tk.Toplevel(window)
-        chart_window.title("Expense Analysis by Category")
-        chart_window.geometry("900x600")
-
-        canvas = tk.Canvas(chart_window, bg="white", width=860, height=520)
-        canvas.pack(padx=20, pady=20, fill="both", expand=True)
-
-        chart_width = 760
-        chart_height = 360
-        origin_x = 80
-        origin_y = 430
-        top_margin = 50
-        left_margin = 80
-
-        canvas.create_text(430, 25, text="Expense Analysis by Category", font=("Arial", 16, "bold"))
-        canvas.create_line(origin_x, origin_y, origin_x + chart_width, origin_y, width=2)
-        canvas.create_line(origin_x, origin_y, origin_x, top_margin, width=2)
-
-        max_value = float(df["TotalExpense"].max())
-        bar_count = len(df)
-        bar_spacing = chart_width / max(bar_count, 1)
-        bar_width = max(24, int(bar_spacing * 0.55))
-
-        for index, row in df.reset_index(drop=True).iterrows():
-            value = float(row["TotalExpense"])
-            bar_height = 0 if max_value == 0 else int((value / max_value) * chart_height)
-            x_center = origin_x + int((index + 0.5) * bar_spacing)
-            x0 = x_center - bar_width // 2
-            x1 = x_center + bar_width // 2
-            y0 = origin_y - bar_height
-            y1 = origin_y
-
-            canvas.create_rectangle(x0, y0, x1, y1, fill="#2E86AB", outline="#1B4F72")
-            canvas.create_text(x_center, y0 - 12, text=f"{value:.2f}", font=("Arial", 9, "bold"))
-            canvas.create_text(x_center, origin_y + 22, text=str(row["CategoryName"]), font=("Arial", 9), angle=0)
+        open_summary_chart(df)
 
     except pyodbc.Error as exc:
         messagebox.showerror("Database Error", f"Could not generate the chart:\n{exc}")
+    except Exception as exc:
+        messagebox.showerror("Error", f"An unexpected error occurred:\n{exc}")
+
+
+def show_all_expenses():
+    try:
+        selected_user = filter_user_var.get().strip() if filter_user_var.get() else None
+        user_id = user_map.get(selected_user) if selected_user else None
+        
+        if user_id:
+            query = """
+                SELECT u.Name AS User, c.CategoryName AS Category, e.Amount, e.ExpenseDate AS Date, e.Description, p.MethodName AS PaymentMethod
+                FROM Expenses e
+                JOIN Users u ON e.UserID = u.UserID
+                JOIN Categories c ON e.CategoryID = c.CategoryID
+                JOIN PaymentMethods p ON e.PaymentMethodID = p.PaymentMethodID
+                WHERE e.UserID = ?
+                ORDER BY e.ExpenseDate DESC
+            """
+            with get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(query, user_id)
+                rows = cursor.fetchall()
+        else:
+            query = """
+                SELECT u.Name AS User, c.CategoryName AS Category, e.Amount, e.ExpenseDate AS Date, e.Description, p.MethodName AS PaymentMethod
+                FROM Expenses e
+                JOIN Users u ON e.UserID = u.UserID
+                JOIN Categories c ON e.CategoryID = c.CategoryID
+                JOIN PaymentMethods p ON e.PaymentMethodID = p.PaymentMethodID
+                ORDER BY e.ExpenseDate DESC
+            """
+            with get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(query)
+                rows = cursor.fetchall()
+        
+        if not rows:
+            messagebox.showinfo("No Data", "No expenses found for the selected user.")
+            return
+        
+        # Create new window
+        expenses_window = tk.Toplevel(window)
+        expenses_window.title("All Expenses")
+        expenses_window.geometry("1200x600")
+        expenses_window.configure(bg=APP_BG)
+        
+        # Header
+        header = tk.Frame(expenses_window, bg=APP_BG)
+        header.pack(fill="x", padx=24, pady=(24, 14))
+        tk.Label(header, text="All Expenses", bg=APP_BG, fg=TEXT_PRIMARY, font=("Helvetica Neue", 20, "bold")).pack(anchor="w")
+        user_filter_text = f"Filter: {selected_user}" if selected_user else "Filter: All Users"
+        tk.Label(header, text=user_filter_text, bg=APP_BG, fg=TEXT_SECONDARY, font=FONT_BODY).pack(anchor="w", pady=(4, 0))
+        
+        # Table frame
+        table_frame = tk.Frame(expenses_window, bg=CARD_BG, highlightthickness=1, highlightbackground=MUTED_BORDER)
+        table_frame.pack(fill="both", expand=True, padx=24, pady=(0, 24))
+        
+        # Headers
+        headers = ["User", "Category", "Amount", "Date", "Description", "Payment Method"]
+        header_frame = tk.Frame(table_frame, bg="#E8EEF5")
+        header_frame.pack(fill="x")
+        
+        col_widths = [150, 150, 120, 120, 300, 150]
+        for i, (header_text, width) in enumerate(zip(headers, col_widths)):
+            tk.Label(
+                header_frame,
+                text=header_text,
+                bg="#E8EEF5",
+                fg=TEXT_PRIMARY,
+                font=FONT_SECTION,
+                width=width // 8,
+                anchor="w",
+                padx=10,
+                pady=12
+            ).grid(row=0, column=i, sticky="w")
+        
+        # Scrollable content
+        canvas = tk.Canvas(table_frame, bg=CARD_BG, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg=CARD_BG)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+        # Add rows
+        for idx, row in enumerate(rows):
+            row_bg = "#FFFFFF" if idx % 2 == 0 else "#F9FAFB"
+            row_frame = tk.Frame(scrollable_frame, bg=row_bg)
+            row_frame.pack(fill="x")
+            
+            col_values = [
+                str(row.User),
+                str(row.Category),
+                format_money(row.Amount),
+                str(row.Date),
+                str(row.Description or ""),
+                str(row.PaymentMethod)
+            ]
+            
+            for j, (value, width) in enumerate(zip(col_values, col_widths)):
+                tk.Label(
+                    row_frame,
+                    text=value,
+                    bg=row_bg,
+                    fg=TEXT_PRIMARY,
+                    font=FONT_BODY,
+                    width=width // 8,
+                    anchor="w",
+                    padx=10,
+                    pady=10
+                ).grid(row=0, column=j, sticky="w")
+    
+    except pyodbc.Error as exc:
+        messagebox.showerror("Database Error", f"Could not load expenses:\n{exc}")
     except Exception as exc:
         messagebox.showerror("Error", f"An unexpected error occurred:\n{exc}")
 
@@ -212,6 +343,18 @@ def check_database_connection():
         return True, "Connected"
     except Exception as exc:
         return False, str(exc)
+
+
+def build_stat_card(parent, title, value_var, accent_color):
+    card = tk.Frame(parent, bg=CARD_BG, highlightthickness=1, highlightbackground=MUTED_BORDER)
+    title_label = tk.Label(card, text=title, bg=CARD_BG, fg=TEXT_SECONDARY, font=FONT_SMALL)
+    title_label.grid(row=0, column=0, sticky="w")
+    value_label = tk.Label(card, textvariable=value_var, bg=CARD_BG, fg=TEXT_PRIMARY, font=FONT_METRIC)
+    value_label.grid(row=1, column=0, sticky="w", pady=(10, 0))
+    accent_strip = tk.Frame(card, bg=accent_color, height=4)
+    accent_strip.grid(row=2, column=0, sticky="ew", pady=(16, 0))
+    card.columnconfigure(0, weight=1)
+    return card
 
 
 def configure_styles():
@@ -246,6 +389,15 @@ def configure_styles():
     style.configure("TCombobox", padding=6)
 
 
+def refresh_dashboard_metrics():
+    selected_user = filter_user_var.get().strip() if filter_user_var.get() else None
+    user_id = user_map.get(selected_user) if selected_user else None
+    metrics = load_dashboard_metrics(user_id)
+    metric_count_var.set(f"{metrics['count']:,}")
+    metric_total_var.set(format_money(metrics['total']))
+    metric_average_var.set(format_money(metrics['average']))
+
+
 def make_card(parent, title, subtitle=None):
     card = ttk.Frame(parent, style="Card.TFrame", padding=20)
     card.columnconfigure(0, weight=1)
@@ -262,9 +414,86 @@ def make_field(parent, label_text, row, widget):
     widget.grid(row=row, column=1, sticky="ew", pady=(0, 14))
 
 
+def open_summary_chart(df):
+    chart_window = tk.Toplevel(window)
+    chart_window.title("BI Dashboard - Expense Analysis")
+    chart_window.geometry("1100x720")
+    chart_window.configure(bg=APP_BG)
+    chart_window.minsize(980, 640)
+
+    shell = tk.Frame(chart_window, bg=APP_BG)
+    shell.pack(fill="both", expand=True, padx=24, pady=24)
+
+    header = tk.Frame(shell, bg=APP_BG)
+    header.pack(fill="x", pady=(0, 14))
+    tk.Label(header, text="BI Dashboard", bg=APP_BG, fg=TEXT_PRIMARY, font=("Helvetica Neue", 22, "bold")).pack(anchor="w")
+    tk.Label(
+        header,
+        text="Expense distribution by category with a cleaner professional presentation",
+        bg=APP_BG,
+        fg=TEXT_SECONDARY,
+        font=FONT_BODY,
+    ).pack(anchor="w", pady=(4, 0))
+
+    body = tk.Frame(shell, bg=CARD_BG, highlightthickness=1, highlightbackground=MUTED_BORDER)
+    body.pack(fill="both", expand=True)
+
+    canvas = tk.Canvas(body, bg=CARD_BG, highlightthickness=0)
+    canvas.pack(fill="both", expand=True, padx=10, pady=10)
+
+    width = 1000
+    height = 560
+    left = 90
+    right = 30
+    top = 70
+    bottom = 110
+    chart_width = width - left - right
+    chart_height = height - top - bottom
+    origin_x = left
+    origin_y = top + chart_height
+
+    max_value = max(float(value) for value in df["TotalExpense"])
+    bar_count = len(df)
+    spacing = chart_width / max(bar_count, 1)
+    bar_width = min(72, max(42, int(spacing * 0.55)))
+    palette = ["#1F6FEB", "#2F80ED", "#16A085", "#F2994A", "#9B51E0", "#C0392B", "#34495E"]
+
+    canvas.create_text(left, 28, anchor="w", text="Expense Analysis by Category", fill=TEXT_PRIMARY, font=("Helvetica Neue", 16, "bold"))
+    canvas.create_text(width - right, 28, anchor="e", text="Amount in LKR", fill=TEXT_SECONDARY, font=FONT_SMALL)
+
+    for tick in range(6):
+        tick_value = max_value * tick / 5 if max_value else 0
+        y = origin_y - int(chart_height * tick / 5)
+        canvas.create_line(origin_x, y, origin_x + chart_width, y, fill="#EEF2F7")
+        canvas.create_text(origin_x - 12, y, text=f"{tick_value:,.0f}", anchor="e", fill=TEXT_SECONDARY, font=FONT_SMALL)
+
+    canvas.create_line(origin_x, origin_y, origin_x + chart_width, origin_y, fill="#8CA0B3", width=2)
+    canvas.create_line(origin_x, origin_y, origin_x, top, fill="#8CA0B3", width=2)
+
+    for index, row in df.reset_index(drop=True).iterrows():
+        value = float(row["TotalExpense"])
+        label = str(row["CategoryName"])
+        bar_height = 0 if max_value == 0 else int((value / max_value) * chart_height)
+        x_center = origin_x + int((index + 0.5) * spacing)
+        x0 = x_center - bar_width // 2
+        x1 = x_center + bar_width // 2
+        y0 = origin_y - bar_height
+        y1 = origin_y
+        color = palette[index % len(palette)]
+
+        canvas.create_rectangle(x0, y0, x1, y1, fill=color, outline=color)
+        canvas.create_text(x_center, y0 - 12, text=format_money(value), fill=TEXT_PRIMARY, font=("Helvetica Neue", 9, "bold"))
+
+        wrapped = "\n".join(textwrap.wrap(label, width=14)) or label
+        canvas.create_text(x_center, origin_y + 20, text=wrapped, fill=TEXT_PRIMARY, font=FONT_SMALL, justify="center")
+
+    canvas.create_rectangle(left, height - 36, left + 18, height - 18, fill=palette[0], outline=palette[0])
+    canvas.create_text(left + 28, height - 27, anchor="w", text="Category total", fill=TEXT_SECONDARY, font=FONT_SMALL)
+
+
 window = tk.Tk()
 window.title("Daily Expense Tracking System")
-window.geometry("980x720")
+window.geometry("1080x820")
 window.resizable(False, False)
 configure_styles()
 
@@ -290,12 +519,43 @@ content_frame.pack(fill="both", expand=True)
 
 content_frame.columnconfigure(0, weight=1)
 
+filter_frame = tk.Frame(content_frame, bg=APP_BG)
+filter_frame.grid(row=0, column=0, sticky="ew", pady=(0, 12))
+filter_frame.columnconfigure(1, weight=1)
+
+filter_label = tk.Label(filter_frame, text="Filter by User:", bg=APP_BG, fg=TEXT_PRIMARY, font=FONT_BODY)
+filter_label.grid(row=0, column=0, sticky="w", padx=(0, 10))
+
+filter_user_var = tk.StringVar()
+filter_combo = ttk.Combobox(filter_frame, textvariable=filter_user_var, state="readonly", width=30)
+filter_combo.grid(row=0, column=1, sticky="w")
+
+def on_filter_change(event=None):
+    refresh_dashboard_metrics()
+
+filter_combo.bind("<<ComboboxSelected>>", on_filter_change)
+
+metrics_frame = tk.Frame(content_frame, bg=APP_BG)
+metrics_frame.grid(row=1, column=0, sticky="ew", pady=(0, 18))
+metrics_frame.columnconfigure(0, weight=1)
+metrics_frame.columnconfigure(1, weight=1)
+metrics_frame.columnconfigure(2, weight=1)
+
+metric_count_var = tk.StringVar(value="-")
+metric_total_var = tk.StringVar(value="-")
+metric_average_var = tk.StringVar(value="-")
+
+build_stat_card(metrics_frame, "Expenses", metric_count_var, "#1F6FEB").grid(row=0, column=0, sticky="ew", padx=(0, 12))
+build_stat_card(metrics_frame, "Total Spent", metric_total_var, "#16A085").grid(row=0, column=1, sticky="ew", padx=12)
+build_stat_card(metrics_frame, "Average Expense", metric_average_var, "#F2994A").grid(row=0, column=2, sticky="ew", padx=(12, 0))
+
 form_card = make_card(
     content_frame,
     "Expense Entry",
     "Fill in the details below to create a new expense record.",
 )
-form_card.grid(row=0, column=0, sticky="nsew")
+form_card.grid(row=2, column=0, sticky="nsew")
+form_card.columnconfigure(0, minsize=140)
 form_card.columnconfigure(1, weight=1)
 
 user_map = {}
@@ -304,46 +564,51 @@ payment_map = {}
 
 user_var = tk.StringVar()
 user_combo = ttk.Combobox(form_card, textvariable=user_var, state="readonly")
-make_field(form_card, "User", 0, user_combo)
+make_field(form_card, "User", 1, user_combo)
 
 category_var = tk.StringVar()
 category_combo = ttk.Combobox(form_card, textvariable=category_var, state="readonly")
-make_field(form_card, "Category", 1, category_combo)
+make_field(form_card, "Category", 2, category_combo)
 
 payment_var = tk.StringVar()
 payment_combo = ttk.Combobox(form_card, textvariable=payment_var, state="readonly")
-make_field(form_card, "Payment Method", 2, payment_combo)
+make_field(form_card, "Payment Method", 3, payment_combo)
 
 amount_entry = ttk.Entry(form_card)
-make_field(form_card, "Amount", 3, amount_entry)
+make_field(form_card, "Amount", 4, amount_entry)
 
 date_entry = ttk.Entry(form_card)
-make_field(form_card, "Expense Date (YYYY-MM-DD)", 4, date_entry)
+make_field(form_card, "Expense Date (YYYY-MM-DD)", 5, date_entry)
 date_entry.insert(0, datetime.now().strftime("%Y-%m-%d"))
 
 description_entry = ttk.Entry(form_card)
-make_field(form_card, "Description", 5, description_entry)
+make_field(form_card, "Description", 6, description_entry)
 
 button_card = make_card(content_frame, "Actions", "Use the buttons below to save data, inspect trends, or refresh dropdowns.")
-button_card.grid(row=1, column=0, sticky="ew", pady=(18, 0))
+button_card.grid(row=3, column=0, sticky="ew", pady=(18, 0))
 
 button_row = ttk.Frame(button_card, style="Card.TFrame")
-button_row.grid(row=2, column=0, sticky="w", pady=(16, 0))
+button_row.grid(row=1, column=0, sticky="w", pady=(16, 0))
 
 ttk.Button(button_row, text="Add Expense", command=add_expense, style="Primary.TButton").grid(row=0, column=0, padx=(0, 10))
 ttk.Button(button_row, text="Show BI Chart", command=show_chart, style="Secondary.TButton").grid(row=0, column=1, padx=(0, 10))
-ttk.Button(button_row, text="Refresh Lists", command=set_combobox_values, style="Secondary.TButton").grid(row=0, column=2)
+ttk.Button(button_row, text="Show All Expenses", command=show_all_expenses, style="Secondary.TButton").grid(row=0, column=2, padx=(0, 10))
+ttk.Button(button_row, text="Refresh Lists", command=set_combobox_values, style="Secondary.TButton").grid(row=0, column=3)
 
 footer_card = ttk.Frame(content_frame, style="TFrame", padding=(4, 18, 4, 0))
-footer_card.grid(row=2, column=0, sticky="ew")
+footer_card.grid(row=4, column=0, sticky="ew")
 hint_text = "The database must contain Users, Categories, and PaymentMethods rows before adding expenses."
 ttk.Label(footer_card, text=hint_text, style="Muted.TLabel", justify="center").pack()
 
 if connection_ok:
     set_combobox_values()
+    filter_combo["values"] = ["All Users"] + list(user_map.keys())
+    filter_combo.current(0)
+    refresh_dashboard_metrics()
 else:
     user_combo["values"] = []
     category_combo["values"] = []
     payment_combo["values"] = []
+    filter_combo["values"] = ["All Users"]
 
 window.mainloop()
