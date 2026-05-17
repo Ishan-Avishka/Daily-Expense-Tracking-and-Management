@@ -181,6 +181,138 @@ def add_expense():
     except Exception as exc:
         messagebox.showerror("Error", f"An unexpected error occurred:\n{exc}")
 
+def manage_users():
+    try:
+        def refresh_list():
+            listbox.delete(0, tk.END)
+            try:
+                rows = get_lookup_rows("SELECT UserID, Name FROM Users ORDER BY Name")
+            except Exception as exc:
+                messagebox.showerror("Database Error", f"Could not load users:\n{exc}")
+                return
+            for r in rows:
+                listbox.insert(tk.END, f"{r.UserID} - {r.Name}")
+
+        def on_add():
+            add_user()
+            refresh_list()
+
+        def on_edit():
+            sel = listbox.curselection()
+            if not sel:
+                messagebox.showwarning("Select User", "Please select a user to edit.")
+                return
+            item = listbox.get(sel[0])
+            uid = int(item.split(" - ")[0])
+            edit_user(uid)
+            refresh_list()
+
+        def on_delete():
+            sel = listbox.curselection()
+            if not sel:
+                messagebox.showwarning("Select User", "Please select a user to delete.")
+                return
+            item = listbox.get(sel[0])
+            uid = int(item.split(" - ")[0])
+            name = item.split(" - ", 1)[1]
+            if not messagebox.askyesno("Confirm Delete", f"Delete user '{name}'? This may fail if expenses reference this user."):
+                return
+            try:
+                with get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("DELETE FROM Users WHERE UserID = ?", uid)
+                    conn.commit()
+                messagebox.showinfo("Deleted", f"User '{name}' deleted.")
+            except pyodbc.Error as exc:
+                messagebox.showerror("Database Error", f"Could not delete user:\n{exc}")
+            except Exception as exc:
+                messagebox.showerror("Error", f"An unexpected error occurred:\n{exc}")
+            refresh_list()
+
+        def on_refresh():
+            refresh_list()
+
+        win = tk.Toplevel(window)
+        win.title("Manage Users")
+        win.geometry("480x520")
+        win.configure(bg=APP_BG)
+
+        header = tk.Frame(win, bg=APP_BG)
+        header.pack(fill="x", padx=16, pady=(12, 6))
+        tk.Label(header, text="Manage Users", bg=APP_BG, fg=TEXT_PRIMARY, font=("Helvetica Neue", 16, "bold")).pack(anchor="w")
+
+        frame = tk.Frame(win, bg=CARD_BG, highlightthickness=1, highlightbackground=MUTED_BORDER)
+        frame.pack(fill="both", expand=True, padx=16, pady=12)
+
+        listbox = tk.Listbox(frame, font=FONT_BODY, activestyle="none")
+        listbox.pack(side="left", fill="both", expand=True, padx=(8,0), pady=8)
+        scrollbar = ttk.Scrollbar(frame, orient="vertical", command=listbox.yview)
+        scrollbar.pack(side="right", fill="y", padx=(0,8), pady=8)
+        listbox.config(yscrollcommand=scrollbar.set)
+
+        btn_frame = tk.Frame(win, bg=APP_BG)
+        btn_frame.pack(fill="x", padx=16, pady=(0,12))
+        ttk.Button(btn_frame, text="Add", command=on_add, style="Secondary.TButton").grid(row=0, column=0, padx=(0,8))
+        ttk.Button(btn_frame, text="Edit", command=on_edit, style="Secondary.TButton").grid(row=0, column=1, padx=(0,8))
+        ttk.Button(btn_frame, text="Delete", command=on_delete, style="Secondary.TButton").grid(row=0, column=2, padx=(0,8))
+        ttk.Button(btn_frame, text="Refresh", command=on_refresh, style="Secondary.TButton").grid(row=0, column=3)
+
+        refresh_list()
+
+    except Exception as exc:
+        messagebox.showerror("Error", f"An unexpected error occurred:\n{exc}")
+
+
+def edit_user(user_id):
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT Name FROM Users WHERE UserID = ?", user_id)
+            row = cursor.fetchone()
+            if not row:
+                messagebox.showerror("Not Found", "User not found.")
+                return
+            current_name = row.Name
+
+        def save_edit():
+            new_name = name_var.get().strip()
+            if not new_name:
+                messagebox.showerror("Error", "Please enter a user name.")
+                return
+            try:
+                with get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("UPDATE Users SET Name = ? WHERE UserID = ?", new_name, user_id)
+                    conn.commit()
+                set_combobox_values()
+                edit_win.destroy()
+            except pyodbc.Error as exc:
+                messagebox.showerror("Database Error", f"Could not update user:\n{exc}")
+            except Exception as exc:
+                messagebox.showerror("Error", f"An unexpected error occurred:\n{exc}")
+
+        edit_win = tk.Toplevel(window)
+        edit_win.title("Edit User")
+        edit_win.geometry("420x160")
+        edit_win.configure(bg=APP_BG)
+
+        frame = tk.Frame(edit_win, bg=CARD_BG, padx=16, pady=16)
+        frame.pack(fill="both", expand=True, padx=18, pady=18)
+
+        tk.Label(frame, text="User Name", bg=CARD_BG, fg=TEXT_PRIMARY, font=FONT_BODY).grid(row=0, column=0, sticky="w")
+        name_var = tk.StringVar(value=current_name)
+        name_entry = ttk.Entry(frame, textvariable=name_var, width=40)
+        name_entry.grid(row=1, column=0, sticky="ew", pady=(8, 12))
+
+        btn_frame = tk.Frame(frame, bg=CARD_BG)
+        btn_frame.grid(row=2, column=0, sticky="e")
+        ttk.Button(btn_frame, text="Save", command=save_edit, style="Primary.TButton").grid(row=0, column=0, padx=(0, 8))
+        ttk.Button(btn_frame, text="Cancel", command=edit_win.destroy, style="Secondary.TButton").grid(row=0, column=1)
+        name_entry.focus()
+
+    except Exception as exc:
+        messagebox.showerror("Error", f"An unexpected error occurred:\n{exc}")
+
 
 def show_chart():
     try:
