@@ -334,6 +334,64 @@ def show_all_expenses():
         messagebox.showerror("Error", f"An unexpected error occurred:\n{exc}")
 
 
+def add_user():
+    try:
+        def save():
+            name = name_var.get().strip()
+            if not name:
+                messagebox.showerror("Error", "Please enter a user name.")
+                return
+            try:
+                with get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("INSERT INTO Users (Name) VALUES (?)", name)
+                    cursor.execute("SELECT SCOPE_IDENTITY()")
+                    row = cursor.fetchone()
+                    new_id = int(row[0]) if row and row[0] is not None else None
+                    conn.commit()
+
+                # Refresh dropdown lists and try to select the new user
+                set_combobox_values()
+                if new_id is not None:
+                    display = f"{new_id} - {name}"
+                    if display in user_combo["values"]:
+                        user_combo.set(display)
+                    else:
+                        # fallback: select first matching name suffix
+                        for v in user_combo["values"]:
+                            if v.endswith(f"- {name}"):
+                                user_combo.set(v)
+                                break
+
+                add_win.destroy()
+            except pyodbc.Error as exc:
+                messagebox.showerror("Database Error", f"Could not add user:\n{exc}")
+            except Exception as exc:
+                messagebox.showerror("Error", f"An unexpected error occurred:\n{exc}")
+
+        add_win = tk.Toplevel(window)
+        add_win.title("Add New User")
+        add_win.geometry("420x160")
+        add_win.configure(bg=APP_BG)
+
+        frame = tk.Frame(add_win, bg=CARD_BG, padx=16, pady=16)
+        frame.pack(fill="both", expand=True, padx=18, pady=18)
+
+        tk.Label(frame, text="User Name", bg=CARD_BG, fg=TEXT_PRIMARY, font=FONT_BODY).grid(row=0, column=0, sticky="w")
+        name_var = tk.StringVar()
+        name_entry = ttk.Entry(frame, textvariable=name_var, width=40)
+        name_entry.grid(row=1, column=0, sticky="ew", pady=(8, 12))
+
+        btn_frame = tk.Frame(frame, bg=CARD_BG)
+        btn_frame.grid(row=2, column=0, sticky="e")
+        ttk.Button(btn_frame, text="Save", command=save, style="Primary.TButton").grid(row=0, column=0, padx=(0, 8))
+        ttk.Button(btn_frame, text="Cancel", command=add_win.destroy, style="Secondary.TButton").grid(row=0, column=1)
+        name_entry.focus()
+
+    except Exception as exc:
+        messagebox.showerror("Error", f"An unexpected error occurred:\n{exc}")
+
+
 def check_database_connection():
     try:
         with get_connection() as conn:
@@ -593,7 +651,8 @@ button_row.grid(row=1, column=0, sticky="w", pady=(16, 0))
 ttk.Button(button_row, text="Add Expense", command=add_expense, style="Primary.TButton").grid(row=0, column=0, padx=(0, 10))
 ttk.Button(button_row, text="Show BI Chart", command=show_chart, style="Secondary.TButton").grid(row=0, column=1, padx=(0, 10))
 ttk.Button(button_row, text="Show All Expenses", command=show_all_expenses, style="Secondary.TButton").grid(row=0, column=2, padx=(0, 10))
-ttk.Button(button_row, text="Refresh Lists", command=set_combobox_values, style="Secondary.TButton").grid(row=0, column=3)
+ttk.Button(button_row, text="Add User", command=add_user, style="Secondary.TButton").grid(row=0, column=3, padx=(0, 10))
+ttk.Button(button_row, text="Refresh Lists", command=set_combobox_values, style="Secondary.TButton").grid(row=0, column=4)
 
 footer_card = ttk.Frame(content_frame, style="TFrame", padding=(4, 18, 4, 0))
 footer_card.grid(row=4, column=0, sticky="ew")
